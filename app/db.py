@@ -151,7 +151,7 @@ def init_db():
         """)
         conn.commit()
         
-        # Crear esquema separado para logs
+    # Crear esquema separado para logs
     cur.execute("""
     CREATE SCHEMA IF NOT EXISTS logs_repo AUTHORIZATION postgres;
     """)
@@ -163,7 +163,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS logs_repo.app_logs (
         id SERIAL PRIMARY KEY,
         timestamp TIMESTAMP NOT NULL,
-        log_type TEXT NOT NULL,        -- INFO, DEBUG, WARNING, ERROR
+        log_type TEXT NOT NULL,
         ip_address TEXT NOT NULL,
         username TEXT NOT NULL,
         action TEXT NOT NULL,
