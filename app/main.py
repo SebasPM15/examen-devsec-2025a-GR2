@@ -3,6 +3,7 @@ from flask import Flask, request, g
 from flask_restx import Api, Resource, fields # type: ignore
 from functools import wraps
 from .db import get_connection, init_db
+from .utils import encrypt_data, is_luhn_valid
 import logging
 
 # Define a simple in-memory token store
@@ -64,8 +65,12 @@ transfer_model = bank_ns.model('Transfer', {
     'amount': fields.Float(required=True, description='Monto a transferir', example=100)
 })
 
+# Se modifica este modelo para actualizar la documetanción en el Swagger
 credit_payment_model = bank_ns.model('CreditPayment', {
-    'amount': fields.Float(required=True, description='Monto de la compra a crédito', example=100)
+    'amount': fields.Float(required=True, description='Monto de la compra', example=100),
+    'card_number': fields.String(required=True, description='Número de la tarjeta a usar', example='499273987160'),
+    'expiry_date': fields.String(required=True, description='Fecha de expiración (MM/YY)', example='12/28'),
+    'cvv': fields.String(required=True, description='CVV de la tarjeta', example='123')
 })
 
 pay_credit_balance_model = bank_ns.model('PayCreditBalance', {
@@ -287,44 +292,58 @@ class CreditPayment(Resource):
     def post(self):
         """
         Realiza una compra a crédito:
+        - Valida, encripta y guarda la información de la tarjeta.
         - Descuenta el monto de la cuenta.
         - Aumenta la deuda de la tarjeta de crédito.
+        (NOTA: La lógica de OTP y validación de establecimiento la implementará otro compañero).
         """
         data = api.payload
         amount = data.get("amount", 0)
+        card_number = data.get("card_number")
+        
         if amount <= 0:
             api.abort(400, "Amount must be greater than zero")
+            
+        # 1. Validar el formato de la tarjeta con Luhn 
+        if not is_luhn_valid(card_number):
+            api.abort(400, "Número de tarjeta inválido.")
+        
         user_id = g.user['id']
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT balance FROM bank.accounts WHERE user_id = %s", (user_id,))
-        row = cur.fetchone()
-        if not row:
-            cur.close()
-            conn.close()
-            api.abort(404, "Account not found")
-        account_balance = float(row[0])
-        if account_balance < amount:
-            cur.close()
-            conn.close()
-            api.abort(400, "Insufficient funds in account")
         try:
+            # 2. Guardar la tarjeta de forma segura si es nueva
+            cur.execute("SELECT id FROM bank_secure.encrypted_cards WHERE user_id = %s AND card_last_4_digits = %s", (user_id, card_number[-4:]))
+            if not cur.fetchone():
+                cur.execute("""
+                    INSERT INTO bank_secure.encrypted_cards (user_id, encrypted_card_number, encrypted_expiry_date, encrypted_cvv, card_last_4_digits)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (user_id, encrypt_data(card_number), encrypt_data(data['expiry_date']), encrypt_data(data['cvv']), card_number[-4:]))
+            
+            # 3. Lógica original del pago
+            cur.execute("SELECT balance FROM bank.accounts WHERE user_id = %s", (user_id,))
+            account_balance = float(cur.fetchone()[0])
+            if account_balance < amount:
+                api.abort(400, "Fondos insuficientes en la cuenta")
+
             cur.execute("UPDATE bank.accounts SET balance = balance - %s WHERE user_id = %s", (amount, user_id))
             cur.execute("UPDATE bank.credit_cards SET balance = balance + %s WHERE user_id = %s", (amount, user_id))
+            
             cur.execute("SELECT balance FROM bank.accounts WHERE user_id = %s", (user_id,))
             new_account_balance = float(cur.fetchone()[0])
             cur.execute("SELECT balance FROM bank.credit_cards WHERE user_id = %s", (user_id,))
             new_credit_balance = float(cur.fetchone()[0])
+            
             conn.commit()
         except Exception as e:
             conn.rollback()
+            api.abort(500, f"Error procesando la compra: {str(e)}")
+        finally:
             cur.close()
             conn.close()
-            api.abort(500, f"Error processing credit card purchase: {str(e)}")
-        cur.close()
-        conn.close()
+
         return {
-            "message": "Credit card purchase successful",
+            "message": "Compra con tarjeta de crédito exitosa. Tarjeta validada y guardada de forma segura.",
             "account_balance": new_account_balance,
             "credit_card_debt": new_credit_balance
         }, 200

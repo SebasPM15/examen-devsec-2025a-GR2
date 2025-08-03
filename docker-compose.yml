@@ -26,6 +26,8 @@ services:
       POSTGRES_DB: corebank
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      # Se añade esta variable para la clave de encriptación
+      FERNET_KEY: "dFVasyWAJXc1nyN4KazzI3ZpdelgciIS4k-Eok10Lkc="
 
 volumes:
   pgdata:

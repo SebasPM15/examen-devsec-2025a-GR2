@@ -34,8 +34,8 @@ def init_db():
         role TEXT NOT NULL,
         full_name TEXT,
         email TEXT
-    ); commit;
-    """)
+    ); 
+    """) # -> Se quitó el 'commit;' de aquí
     conn.commit()
     
     # Crear la tabla de cuentas
@@ -44,8 +44,8 @@ def init_db():
         id SERIAL PRIMARY KEY,
         balance NUMERIC NOT NULL DEFAULT 0,
         user_id INTEGER REFERENCES bank.users(id)
-    ); commit;
-    """)
+    );
+    """) # -> Se quitó el 'commit;' de aquí
     conn.commit()
     
     # Crear la tabla de tarjetas de crédito
@@ -55,8 +55,8 @@ def init_db():
         limit_credit NUMERIC NOT NULL DEFAULT 1,
         balance NUMERIC NOT NULL DEFAULT 0,
         user_id INTEGER REFERENCES bank.users(id)
-    ); commit;
-    """)
+    ); 
+    """) # -> Se quitó el 'commit;' de aquí
     
     # Create tokens table to persist authentication tokens
     cur.execute("""
@@ -64,10 +64,30 @@ def init_db():
         token TEXT PRIMARY KEY,
         user_id INTEGER REFERENCES bank.users(id),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    ); commit;
-    """)
+    ); 
+    """) # -> Se quitó el 'commit;' de aquí
     
     conn.commit()
+    
+    # --- INICIO DE CAMBIOS (Parte de TCE-04) - Mateo Pilco ---
+    
+    # Se crea un nuevo esquema para datos sensibles de tarjetas
+    cur.execute("CREATE SCHEMA IF NOT EXISTS bank_secure AUTHORIZATION postgres;")
+    conn.commit()
+
+    # Tabla para guardar de forma segura los datos de tarjetas encriptados
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS bank_secure.encrypted_cards (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES bank.users(id),
+        encrypted_card_number TEXT NOT NULL,
+        encrypted_expiry_date TEXT NOT NULL,
+        encrypted_cvv TEXT NOT NULL,
+        card_last_4_digits TEXT NOT NULL -- Para mostrar al usuario de forma segura
+    );
+    """)
+    conn.commit()
+    # --- FIN DE CAMBIOS ---
     
     # Insertar datos de ejemplo si no existen usuarios
     cur.execute("SELECT COUNT(*) FROM bank.users;")
