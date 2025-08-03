@@ -1,4 +1,7 @@
 import os
+import random
+import string
+from datetime import datetime, timedelta
 from cryptography.fernet import Fernet
 
 # --- Manejo de Encriptación ---
@@ -32,3 +35,10 @@ def is_luhn_valid(card_number: str) -> bool:
             d -= 9
         s += d
     return s % 10 == 0
+
+#-- funciones para OTP --
+def generate_otp(length: int = 6) -> str:
+    return ''.join(random.choices(string.digits, k=length))
+
+def otp_expiration(minutes=5) -> datetime:
+    return datetime.utcnow() + timedelta(minutes=minutes)

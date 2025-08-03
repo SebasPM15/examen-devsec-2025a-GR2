@@ -2,9 +2,11 @@ import secrets
 from flask import Flask, request, g
 from flask_restx import Api, Resource, fields # type: ignore
 from functools import wraps
-from .db import get_connection, init_db
-from .utils import encrypt_data, is_luhn_valid
+from .db import get_connection, init_db, save_otp, validate_otp
+from .utils import encrypt_data, is_luhn_valid, generate_otp, otp_expiration
 import logging
+from datetime import datetime
+
 
 # Define a simple in-memory token store
 tokens = {}
@@ -70,12 +72,59 @@ credit_payment_model = bank_ns.model('CreditPayment', {
     'amount': fields.Float(required=True, description='Monto de la compra', example=100),
     'card_number': fields.String(required=True, description='Número de la tarjeta a usar', example='499273987160'),
     'expiry_date': fields.String(required=True, description='Fecha de expiración (MM/YY)', example='12/28'),
-    'cvv': fields.String(required=True, description='CVV de la tarjeta', example='123')
+    'cvv': fields.String(required=True, description='CVV de la tarjeta', example='123'),
+    'otp_code': fields.String(required=True, description='Código OTP recibido por el usuario', example='123456'),
+    'establishment_id': fields.Integer(required=True, description='ID del establecimiento', example=1)
+
 })
 
 pay_credit_balance_model = bank_ns.model('PayCreditBalance', {
     'amount': fields.Float(required=True, description='Monto a abonar a la deuda de la tarjeta', example=50)
 })
+
+# ---------------- OTP MODELS ----------------
+
+otp_request_model = auth_ns.model('OTPRequest', {
+    #no se requiere user_id porque se obtiene del token
+})
+
+otp_validate_model = auth_ns.model('OTPValidate', {
+    'code': fields.String(required=True, description='Código OTP'),
+})
+
+# ---------------- Token-Required Decorator ----------------
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            api.abort(401, "Authorization header missing or invalid")
+        token = auth_header.split(" ")[1]
+        logging.debug("Token: "+str(token))
+        conn = get_connection()
+        cur = conn.cursor()
+        # Query the token in the database and join with users table to retrieve user info
+        cur.execute("""
+            SELECT u.id, u.username, u.role, u.full_name, u.email 
+            FROM bank.tokens t
+            JOIN bank.users u ON t.user_id = u.id
+            WHERE t.token = %s
+        """, (token,))
+        user = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not user:
+            api.abort(401, "Invalid or expired token")
+        g.user = {
+            "id": user[0],
+            "username": user[1],
+            "role": user[2],
+            "full_name": user[3],
+            "email": user[4]
+        }
+        return f(*args, **kwargs)
+    return decorated
 
 # ---------------- Authentication Endpoints ----------------
 
@@ -128,39 +177,48 @@ class Logout(Resource):
         conn.close()
         return {"message": "Logout successful"}, 200
 
-# ---------------- Token-Required Decorator ----------------
+# ---------------- OTP Endpoints ----------------
 
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            api.abort(401, "Authorization header missing or invalid")
-        token = auth_header.split(" ")[1]
-        logging.debug("Token: "+str(token))
-        conn = get_connection()
-        cur = conn.cursor()
-        # Query the token in the database and join with users table to retrieve user info
-        cur.execute("""
-            SELECT u.id, u.username, u.role, u.full_name, u.email 
-            FROM bank.tokens t
-            JOIN bank.users u ON t.user_id = u.id
-            WHERE t.token = %s
-        """, (token,))
-        user = cur.fetchone()
-        cur.close()
-        conn.close()
-        if not user:
-            api.abort(401, "Invalid or expired token")
-        g.user = {
-            "id": user[0],
-            "username": user[1],
-            "role": user[2],
-            "full_name": user[3],
-            "email": user[4]
-        }
-        return f(*args, **kwargs)
-    return decorated
+@auth_ns.route('/generate-otp')
+class GenerateOTP(Resource):
+    @token_required  
+    @auth_ns.expect(otp_request_model, validate=True)  # Ahora no requiere user_id en body
+    @auth_ns.doc('generate_otp')
+    def post(self):
+        """Genera y guarda un código OTP para el usuario autenticado."""
+        # user_id viene del token y del contexto g
+        user_id = g.user['id']
+
+        code = generate_otp()
+        expires_at = otp_expiration()
+
+        save_otp(user_id, code, expires_at)
+
+        return {
+            "message": "OTP generado correctamente",
+            "otp": code,
+            "expires_at": expires_at.isoformat()
+        }, 200
+
+
+@auth_ns.route('/validate-otp')
+class ValidateOTP(Resource):
+    @token_required  # Agregar protección para obtener usuario autenticado
+    @auth_ns.expect(otp_validate_model, validate=True)
+    @auth_ns.doc('validate_otp')
+    def post(self):
+        """Valida un código OTP para el usuario autenticado."""
+        data = api.payload
+        user_id = g.user['id']  # Obtener del token, no del payload
+        code = data.get('code')
+
+        if not code:
+            api.abort(400, "Código OTP es requerido")
+
+        if validate_otp(user_id, code):
+            return {"message": "OTP válido"}, 200
+        else:
+            api.abort(400, "OTP inválido o expirado")
 
 # ---------------- Banking Operation Endpoints ----------------
 
@@ -295,12 +353,14 @@ class CreditPayment(Resource):
         - Valida, encripta y guarda la información de la tarjeta.
         - Descuenta el monto de la cuenta.
         - Aumenta la deuda de la tarjeta de crédito.
-        (NOTA: La lógica de OTP y validación de establecimiento la implementará otro compañero).
+        - Usa OTP para validar la transacción, previo a haber iniciado sesión y generado un OTP.
         """
         data = api.payload
         amount = data.get("amount", 0)
         card_number = data.get("card_number")
-        
+        otp_code = data.get("otp_code")
+        establishment_id = data.get("establishment_id")
+
         if amount <= 0:
             api.abort(400, "Amount must be greater than zero")
             
@@ -308,10 +368,23 @@ class CreditPayment(Resource):
         if not is_luhn_valid(card_number):
             api.abort(400, "Número de tarjeta inválido.")
         
+        # validar OTP y establecimiento
+        if not otp_code or not establishment_id:
+            api.abort(400, "OTP code y establishment_id son requeridos")
+
         user_id = g.user['id']
         conn = get_connection()
         cur = conn.cursor()
         try:
+            # Verificar OTP
+            if not validate_otp(user_id, otp_code):
+                api.abort(400, "OTP inválido o expirado")
+            
+            # Verificar establecimiento
+            cur.execute("SELECT id FROM bank.establecimientos WHERE id = %s", (establishment_id,))
+            if not cur.fetchone():
+                api.abort(400, "Establecimiento no válido o no registrado")
+
             # 2. Guardar la tarjeta de forma segura si es nueva
             cur.execute("SELECT id FROM bank_secure.encrypted_cards WHERE user_id = %s AND card_last_4_digits = %s", (user_id, card_number[-4:]))
             if not cur.fetchone():
