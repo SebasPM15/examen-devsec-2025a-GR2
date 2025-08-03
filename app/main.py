@@ -1,4 +1,6 @@
+from http.client import HTTPException
 import secrets
+from app.logger import write_log
 from flask import Flask, request, g
 from flask_restx import Api, Resource, fields # type: ignore
 from functools import wraps
@@ -123,6 +125,7 @@ class Login(Resource):
     @auth_ns.expect(login_model, validate=True)
     @auth_ns.doc('login')
     def post(self):
+        ip = request.remote_addr or "unknown"
         """Inicia sesión y devuelve un token JWT."""
         data = api.payload
         username = data.get("username")
@@ -134,7 +137,6 @@ class Login(Resource):
         user = cur.fetchone()
         cur.close()
         conn.close()
-
         if user and user[2] == password:
             payload = {
                 "user_id": user[0],
@@ -143,14 +145,17 @@ class Login(Resource):
                 "email": user[5]
             }
             token = create_jwt(payload)
+            write_log("INFO", ip, username, "Login exitoso", 200)
             return {"message": "Login successful", "token": token}, 200
         else:
+            write_log("WARNING", ip, username or "unknown", "Intento de login fallido", 401)
             api.abort(401, "Invalid credentials")
 
 @auth_ns.route('/logout')
 class Logout(Resource):
     @auth_ns.doc('logout')
     def post(self):
+        ip = request.remote_addr or "unknown"
         """Invalida el token de autenticación."""
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
@@ -167,6 +172,9 @@ class Logout(Resource):
         conn.commit()
         cur.close()
         conn.close()
+        payload = verify_jwt(token)
+        username = payload["username"] if payload else "unknown"
+        write_log("INFO", ip, username, "Logout exitoso", 200)
         return {"message": "Logout successful"}, 200
 
 # ---------------- OTP Endpoints ----------------
@@ -185,7 +193,8 @@ class GenerateOTP(Resource):
         expires_at = otp_expiration()
 
         save_otp(user_id, code, expires_at)
-
+        ip = request.remote_addr or "unknown"
+        write_log("INFO", ip, g.user["username"], "OTP generado", 200)
         return {
             "message": "OTP generado correctamente",
             "otp": code,
@@ -208,8 +217,11 @@ class ValidateOTP(Resource):
             api.abort(400, "Código OTP es requerido")
 
         if validate_otp(user_id, code):
+            ip = request.remote_addr or "unknown"
+            write_log("INFO", ip, g.user["username"], "OTP válido", 200)
             return {"message": "OTP válido"}, 200
         else:
+            write_log("WARNING", ip, g.user["username"], "OTP inválido o expirado", 400)
             api.abort(400, "OTP inválido o expirado")
 
 # ---------------- Banking Operation Endpoints ----------------
@@ -249,6 +261,8 @@ class Deposit(Resource):
         conn.commit()
         cur.close()
         conn.close()
+        ip = request.remote_addr or "unknown"
+        write_log("INFO", ip, g.user["username"], f"Depósito de ${amount} en cuenta {account_number}", 200)
         return {"message": "Deposit successful", "new_balance": new_balance}, 200
 
 @bank_ns.route('/withdraw')
@@ -257,6 +271,7 @@ class Withdraw(Resource):
     @bank_ns.doc('withdraw')
     @token_required
     def post(self):
+        ip = request.remote_addr or "unknown"
         """Realiza un retiro de la cuenta del usuario autenticado."""
         data = api.payload
         amount = data.get("amount", 0)
@@ -275,12 +290,14 @@ class Withdraw(Resource):
         if current_balance < amount:
             cur.close()
             conn.close()
+            write_log("WARNING", ip, g.user["username"], f"Retiro fallido por fondos insuficientes: ${amount}", 400)
             api.abort(400, "Insufficient funds")
         cur.execute("UPDATE bank.accounts SET balance = balance - %s WHERE user_id = %s RETURNING balance", (amount, user_id))
         new_balance = float(cur.fetchone()[0])
         conn.commit()
         cur.close()
         conn.close()
+        write_log("INFO", ip, g.user["username"], f"Retiro de ${amount}", 200)
         return {"message": "Withdrawal successful", "new_balance": new_balance}, 200
 
 @bank_ns.route('/transfer')
@@ -289,6 +306,7 @@ class Transfer(Resource):
     @bank_ns.doc('transfer')
     @token_required
     def post(self):
+        ip = request.remote_addr or "unknown"
         """Transfiere fondos desde la cuenta del usuario autenticado a otra cuenta."""
         data = api.payload
         target_username = data.get("target_username")
@@ -317,6 +335,7 @@ class Transfer(Resource):
         if not target_user:
             cur.close()
             conn.close()
+            write_log("WARNING", ip, g.user["username"], f"Transferencia fallida: destinatario {target_username} no encontrado", 404)
             api.abort(404, "Target user not found")
         target_user_id = target_user[0]
         try:
@@ -329,9 +348,11 @@ class Transfer(Resource):
             conn.rollback()
             cur.close()
             conn.close()
+            write_log("ERROR", ip, g.user["username"], f"Error durante transferencia: {str(e)}", 500)
             api.abort(500, f"Error during transfer: {str(e)}")
         cur.close()
         conn.close()
+        write_log("INFO", ip, g.user["username"], f"Transferencia de ${amount} a {target_username}", 200)
         return {"message": "Transfer successful", "new_balance": new_balance}, 200
 
 @bank_ns.route('/credit-payment')
@@ -340,6 +361,7 @@ class CreditPayment(Resource):
     @bank_ns.doc('credit_payment')
     @token_required
     def post(self):
+        ip = request.remote_addr or "unknown"
         """
         Realiza una compra a crédito:
         - Valida, encripta y guarda la información de la tarjeta.
@@ -370,11 +392,13 @@ class CreditPayment(Resource):
         try:
             # Verificar OTP
             if not validate_otp(user_id, otp_code):
+                write_log("WARNING", ip, g.user["username"], "Compra rechazada: OTP inválido", 400)
                 api.abort(400, "OTP inválido o expirado")
             
             # Verificar establecimiento
             cur.execute("SELECT id FROM bank.establecimientos WHERE id = %s", (establishment_id,))
             if not cur.fetchone():
+                write_log("WARNING", ip, g.user["username"], f"Compra rechazada: Establecimiento {establishment_id} inválido", 400)
                 api.abort(400, "Establecimiento no válido o no registrado")
 
             # 2. Guardar la tarjeta de forma segura si es nueva
@@ -400,14 +424,21 @@ class CreditPayment(Resource):
             new_credit_balance = float(cur.fetchone()[0])
             
             conn.commit()
-        except Exception as e:
+            write_log("INFO", ip, g.user["username"], f"Compra a crédito por ${amount} en establecimiento {establishment_id}", 200)
+
+        except HTTPException as http_err:
             conn.rollback()
-            api.abort(500, f"Error procesando la compra: {str(e)}")
+            raise http_err
+        except Exception as e:
+            write_log("ERROR", ip, g.user["username"], f"Error procesando compra: {str(e)}", 500)
+            logging.exception("Error procesando compra")
+            conn.rollback()
+            api.abort(500, "Error interno inesperado. Contacta al administrador.")
         finally:
             cur.close()
             conn.close()
 
-        return {
+        return {           
             "message": "Compra con tarjeta de crédito exitosa. Tarjeta validada y guardada de forma segura.",
             "account_balance": new_account_balance,
             "credit_card_debt": new_credit_balance
@@ -419,6 +450,7 @@ class PayCreditBalance(Resource):
     @bank_ns.doc('pay_credit_balance')
     @token_required
     def post(self):
+        ip = request.remote_addr or "unknown"
         """
         Realiza un abono a la deuda de la tarjeta:
         - Descuenta el monto (o el máximo posible) de la cuenta.
@@ -442,6 +474,7 @@ class PayCreditBalance(Resource):
         if account_balance < amount:
             cur.close()
             conn.close()
+            write_log("WARNING", ip, g.user["username"], f"Intento de pago fallido: fondos insuficientes (${amount})", 400)
             api.abort(400, "Insufficient funds in account")
         # Get current credit card debt
         cur.execute("SELECT balance FROM bank.credit_cards WHERE user_id = %s", (user_id,))
@@ -460,10 +493,12 @@ class PayCreditBalance(Resource):
             cur.execute("SELECT balance FROM bank.credit_cards WHERE user_id = %s", (user_id,))
             new_credit_debt = float(cur.fetchone()[0])
             conn.commit()
+            write_log("INFO", ip, g.user["username"], f"Pago de deuda por ${payment}", 200)
         except Exception as e:
             conn.rollback()
             cur.close()
             conn.close()
+            write_log("ERROR", ip, g.user["username"], f"Error procesando pago de deuda: {str(e)}", 500)
             api.abort(500, f"Error processing credit balance payment: {str(e)}")
         cur.close()
         conn.close()

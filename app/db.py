@@ -150,6 +150,27 @@ def init_db():
             ('Restaurante XYZ', 'Calle Falsa 456');
         """)
         conn.commit()
+        
+        # Crear esquema separado para logs
+    cur.execute("""
+    CREATE SCHEMA IF NOT EXISTS logs_repo AUTHORIZATION postgres;
+    """)
+    conn.commit()
+
+
+    # Crear tabla de logs
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS logs_repo.app_logs (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP NOT NULL,
+        log_type TEXT NOT NULL,        -- INFO, DEBUG, WARNING, ERROR
+        ip_address TEXT NOT NULL,
+        username TEXT NOT NULL,
+        action TEXT NOT NULL,
+        http_status INTEGER NOT NULL
+    );
+    """)
+    conn.commit()
 
     cur.close()
     conn.close()

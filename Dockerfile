@@ -7,6 +7,9 @@ WORKDIR /app
 # Instalar dependencias del sistema (gcc, libpq-dev para compilar psycopg2)
 RUN apt-get update && apt-get install -y gcc libpq-dev && rm -rf /var/lib/apt/lists/*
 
+# Zona Horaria para evitar problemas con la hora local
+RUN ln -snf /usr/share/zoneinfo/America/Guayaquil /etc/localtime && echo "America/Guayaquil" > /etc/timezone
+
 # Copiar archivo de requerimientos e instalar dependencias Python
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
