@@ -1,0 +1,27 @@
+
+<html>
+<head>
+    <title>Reporte Semgrep</title>
+    <style>
+        body { font-family: Arial; }
+        .issue { margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
+        .severity { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Reporte Semgrep</h1>
+
+    <div class="issue">
+        <p><span class="severity">python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host</span></p>
+        <p><strong>Archivo:</strong> app/main.py</p>
+        <p><strong>Línea:</strong> 516</p>
+        <p><strong>Mensaje:</strong> Running flask app with host 0.0.0.0 could expose the server publicly.</p>
+    </div>
+    
+    <div class="issue">
+        <p><span class="severity">python.flask.security.audit.debug-enabled.debug-enabled</span></p>
+        <p><strong>Archivo:</strong> app/main.py</p>
+        <p><strong>Línea:</strong> 516</p>
+        <p><strong>Mensaje:</strong> Detected Flask app with debug=True. Do not deploy to production with this flag enabled as it will leak sensitive information. Instead, consider using Flask configuration variables or setting 'debug' using system environment variables.</p>
+    </div>
+    </body></html>

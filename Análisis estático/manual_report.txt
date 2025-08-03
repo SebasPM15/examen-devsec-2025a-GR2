@@ -1,0 +1,47 @@
+1. CREDENCIALES HARDCODEADAS:
+./app/db.py:11:DB_PASSWORD = os.environ.get('POSTGRES_PASSWORD', 'postgres')
+./app/db.py:19:        password=DB_PASSWORD
+./app/utils.py:8:key = os.environ.get('FERNET_KEY')
+./app/utils.py:10:    key = Fernet.generate_key().decode()
+./app/main.py:56:    'password': fields.String(required=True, description='Contraseña', example='pass1')
+./app/main.py:132:        password = data.get("password")
+./app/main.py:136:        cur.execute("SELECT id, username, password, role, full_name, email FROM bank.users WHERE username = %s", (username,))
+./app/jwt.py:8:SECRET_KEY = os.environ.get('JWT_SECRET')
+./docker-compose.yml:29:      FERNET_KEY: "dFVasyWAJXc1nyN4KazzI3ZpdelgciIS4k-Eok10Lkc="
+./docker-compose.yml:30:      JWT_SECRET: "9zk}b)#mm3?a@G]xL1%?-Y%Z*5W*ey?A{q.w@H+S+j]+cZ_{T-GZPgm+],.{;wudJ;Rr!jETqR@2FNXG)[mm@-gabwS/k9(aURcNvt!gTb$:rGZ]pc[PL%;,eqK{&[/qta]zaKeCXUt0}39J{_=hp&}U5zT6}hciV;2.X2QNa49Q7==q%yE5W2/&[[SYTR*m]MreD06@VtxYTaVQh;_PV!]M}@Vvb60.tJHULp&e&9i?S]:phZpH/zR]{$GNnE/m*D!BC2%,CGZFe@iLPVC5ft@v(J4?7}_!@=hjdP+N{rzp"
+
+2. SQL INJECTION PATTERNS:
+./app/db.py:181:    cur.execute("SELECT COUNT(*) FROM bank.establecimientos WHERE id = %s", (id_establecimiento,))
+./app/db.py:224:        cur.execute("UPDATE bank.otp_codes SET used = TRUE WHERE id = %s", (otp_id,))
+./app/main.py:136:        cur.execute("SELECT id, username, password, role, full_name, email FROM bank.users WHERE username = %s", (username,))
+./app/main.py:166:        cur.execute("DELETE FROM bank.tokens WHERE token = %s", (token,))
+./app/main.py:283:        cur.execute("SELECT balance FROM bank.accounts WHERE user_id = %s", (user_id,))
+./app/main.py:295:        cur.execute("UPDATE bank.accounts SET balance = balance - %s WHERE user_id = %s RETURNING balance", (amount, user_id))
+./app/main.py:321:        cur.execute("SELECT balance FROM bank.accounts WHERE user_id = %s", (g.user['id'],))
+./app/main.py:333:        cur.execute("SELECT id FROM bank.users WHERE username = %s", (target_username,))
+./app/main.py:342:            cur.execute("UPDATE bank.accounts SET balance = balance - %s WHERE user_id = %s", (amount, g.user['id']))
+./app/main.py:343:            cur.execute("UPDATE bank.accounts SET balance = balance + %s WHERE user_id = %s", (amount, target_user_id))
+./app/main.py:344:            cur.execute("SELECT balance FROM bank.accounts WHERE user_id = %s", (g.user['id'],))
+./app/main.py:399:            cur.execute("SELECT id FROM bank.establecimientos WHERE id = %s", (establishment_id,))
+./app/main.py:405:            cur.execute("SELECT id FROM bank_secure.encrypted_cards WHERE user_id = %s AND card_last_4_digits = %s", (user_id, card_number[-4:]))
+./app/main.py:413:            cur.execute("SELECT balance FROM bank.accounts WHERE user_id = %s", (user_id,))
+./app/main.py:418:            cur.execute("UPDATE bank.accounts SET balance = balance - %s WHERE user_id = %s", (amount, user_id))
+./app/main.py:419:            cur.execute("UPDATE bank.credit_cards SET balance = balance + %s WHERE user_id = %s", (amount, user_id))
+./app/main.py:421:            cur.execute("SELECT balance FROM bank.accounts WHERE user_id = %s", (user_id,))
+./app/main.py:423:            cur.execute("SELECT balance FROM bank.credit_cards WHERE user_id = %s", (user_id,))
+./app/main.py:467:        cur.execute("SELECT balance FROM bank.accounts WHERE user_id = %s", (user_id,))
+./app/main.py:480:        cur.execute("SELECT balance FROM bank.credit_cards WHERE user_id = %s", (user_id,))
+./app/main.py:489:            cur.execute("UPDATE bank.accounts SET balance = balance - %s WHERE user_id = %s", (payment, user_id))
+./app/main.py:490:            cur.execute("UPDATE bank.credit_cards SET balance = balance - %s WHERE user_id = %s", (payment, user_id))
+./app/main.py:491:            cur.execute("SELECT balance FROM bank.accounts WHERE user_id = %s", (user_id,))
+./app/main.py:493:            cur.execute("SELECT balance FROM bank.credit_cards WHERE user_id = %s", (user_id,))
+
+3. CONFIGURACIONES INSEGURAS:
+./app/main.py:516:    app.run(host="0.0.0.0", port=8000, debug=True)
+
+4. INFORMACIÓN EN LOGS:
+./app/logger.py:10:def write_log(log_type: str, ip_address: str, username: str, action: str, http_status: int):
+./app/logger.py:30:        print(f"No se pudo guardar el log: {e}")
+./app/utils.py:11:    print(f"ATENCION: No se encontró FERNET_KEY. Usando una clave generada: {key}")
+./app/utils.py:12:    print("Por favor, configura esta variable de entorno en tu docker-compose.yml.")
+./app/main.py:3:from app.logger import write_log
