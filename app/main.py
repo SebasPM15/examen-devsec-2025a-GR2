@@ -6,6 +6,7 @@ from .db import get_connection, init_db, save_otp, validate_otp
 from .utils import encrypt_data, is_luhn_valid, generate_otp, otp_expiration
 import logging
 from datetime import datetime
+from .jwt import create_jwt, verify_jwt
 
 
 # Define a simple in-memory token store
@@ -101,27 +102,16 @@ def token_required(f):
         if not auth_header.startswith("Bearer "):
             api.abort(401, "Authorization header missing or invalid")
         token = auth_header.split(" ")[1]
-        logging.debug("Token: "+str(token))
-        conn = get_connection()
-        cur = conn.cursor()
-        # Query the token in the database and join with users table to retrieve user info
-        cur.execute("""
-            SELECT u.id, u.username, u.role, u.full_name, u.email 
-            FROM bank.tokens t
-            JOIN bank.users u ON t.user_id = u.id
-            WHERE t.token = %s
-        """, (token,))
-        user = cur.fetchone()
-        cur.close()
-        conn.close()
-        if not user:
+        payload = verify_jwt(token)
+        if not payload:
             api.abort(401, "Invalid or expired token")
+        
+        # Guardar datos del usuario en `g.user` para uso en endpoints
         g.user = {
-            "id": user[0],
-            "username": user[1],
-            "role": user[2],
-            "full_name": user[3],
-            "email": user[4]
+            "id": payload["user_id"],
+            "username": payload["username"],
+            "role": payload["role"],
+            "email": payload.get("email", "")
         }
         return f(*args, **kwargs)
     return decorated
@@ -133,26 +123,28 @@ class Login(Resource):
     @auth_ns.expect(login_model, validate=True)
     @auth_ns.doc('login')
     def post(self):
-        """Inicia sesión y devuelve un token de autenticación."""
+        """Inicia sesión y devuelve un token JWT."""
         data = api.payload
         username = data.get("username")
         password = data.get("password")
-        
+
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("SELECT id, username, password, role, full_name, email FROM bank.users WHERE username = %s", (username,))
         user = cur.fetchone()
+        cur.close()
+        conn.close()
+
         if user and user[2] == password:
-            token = secrets.token_hex(16)
-            # Persist the token in the database
-            cur.execute("INSERT INTO bank.tokens (token, user_id) VALUES (%s, %s)", (token, user[0]))
-            conn.commit()
-            cur.close()
-            conn.close()
+            payload = {
+                "user_id": user[0],
+                "username": user[1],
+                "role": user[3],
+                "email": user[5]
+            }
+            token = create_jwt(payload)
             return {"message": "Login successful", "token": token}, 200
         else:
-            cur.close()
-            conn.close()
             api.abort(401, "Invalid credentials")
 
 @auth_ns.route('/logout')

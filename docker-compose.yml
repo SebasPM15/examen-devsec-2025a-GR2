@@ -26,8 +26,9 @@ services:
       POSTGRES_DB: corebank
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      # Se añade esta variable para la clave de encriptación
       FERNET_KEY: "dFVasyWAJXc1nyN4KazzI3ZpdelgciIS4k-Eok10Lkc="
+      JWT_SECRET: "9zk}b)#mm3?a@G]xL1%?-Y%Z*5W*ey?A{q.w@H+S+j]+cZ_{T-GZPgm+],.{;wudJ;Rr!jETqR@2FNXG)[mm@-gabwS/k9(aURcNvt!gTb$:rGZ]pc[PL%;,eqK{&[/qta]zaKeCXUt0}39J{_=hp&}U5zT6}hciV;2.X2QNa49Q7==q%yE5W2/&[[SYTR*m]MreD06@VtxYTaVQh;_PV!]M}@Vvb60.tJHULp&e&9i?S]:phZpH/zR]{$GNnE/m*D!BC2%,CGZFe@iLPVC5ft@v(J4?7}_!@=hjdP+N{rzp"
+      JWT_EXP_MINUTES: "30"
 
 volumes:
   pgdata:
